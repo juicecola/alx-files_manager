@@ -1,70 +1,48 @@
-const { MongoClient } = require('mongodb');
-const mongo = require('mongodb');
-const { pwdHashed } = require('./utils');
+import { promisify } from 'util';
+import { createClient } from 'redis';
 
-class DBClient {
+class RedisClient {
   constructor() {
-    const host = (process.env.DB_HOST) ? process.env.DB_HOST : 'localhost';
-    const port = (process.env.DB_PORT) ? process.env.DB_PORT : 27017;
-    this.database = (process.env.DB_DATABASE) ? process.env.DB_DATABASE : 'files_manager';
-    const dbUrl = `mongodb://${host}:${port}`;
-    this.connected = false;
-    this.client = new MongoClient(dbUrl, { useUnifiedTopology: true });
-    this.client.connect().then(() => {
-      this.connected = true;
-    }).catch((err) => console.log(err.message));
+    // Create a Redis client.
+    this.client = createClient();
+    
+    // Track client's connection status.
+    this.isClientConnected = true;
+    
+    // Handle connection errors.
+    this.client.on('error', (err) => {
+      console.error('Failed to connect:', err.message || err.toString());
+      this.isClientConnected = false;
+    });
+    
+    // Handle successful connection.
+    this.client.on('connect', () => {
+      this.isClientConnected = true;
+    });
   }
 
+  // Check if Redis connection is active.
   isAlive() {
-    return this.connected;
+    return this.isClientConnected;
   }
 
-  async nbUsers() {
-    await this.client.connect();
-    const users = await this.client.db(this.database).collection('users').countDocuments();
-    return users;
+  // Get value of a key from Redis.
+  async get(key) {
+    return promisify(this.client.GET).bind(this.client)(key);
   }
 
-  async nbFiles() {
-    await this.client.connect();
-    const users = await this.client.db(this.database).collection('files').countDocuments();
-    return users;
+  // Store key, value, and set expiration.
+  async set(key, value, duration) {
+    await promisify(this.client.SETEX).bind(this.client)(key, duration, value);
   }
 
-  async createUser(email, password) {
-    const hashedPwd = pwdHashed(password);
-    await this.client.connect();
-    const user = await this.client.db(this.database).collection('users').insertOne({ email, password: hashedPwd });
-    return user;
-  }
-
-  async getUser(email) {
-    await this.client.connect();
-    const user = await this.client.db(this.database).collection('users').find({ email }).toArray();
-    if (!user.length) {
-      return null;
-    }
-    return user[0];
-  }
-
-  async getUserById(id) {
-    const _id = new mongo.ObjectID(id);
-    await this.client.connect();
-    const user = await this.client.db(this.database).collection('users').find({ _id }).toArray();
-    if (!user.length) {
-      return null;
-    }
-    return user[0];
-  }
-
-  async userExist(email) {
-    const user = await this.getUser(email);
-    if (user) {
-      return true;
-    }
-    return false;
+  // Remove value by key from Redis.
+  async del(key) {
+    await promisify(this.client.DEL).bind(this.client)(key);
   }
 }
 
-const dbClient = new DBClient();
-module.exports = dbClient;
+// Create Redis client instance.
+export const redisClient = new RedisClient();
+export default redisClient;
+
